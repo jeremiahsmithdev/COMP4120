@@ -1,7 +1,7 @@
 # Importing required packages
 import numpy as np
 import pandas as pd
-import multiprocessing #
+import multiprocessing # multiprocessing
 
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split as split
@@ -69,12 +69,16 @@ def train_evaluate(ga_individual_solution):
     seq_length_bits = BitArray(ga_individual_solution[0:4])         # 8 / ... / 136  4b
     RNN_size_bits = BitArray(ga_individual_solution[4:6])          # 128 / 256 / 384 / 512 2b
     layer_count_bits = BitArray(ga_individual_solution[6:8])       # 1 / 1 / 2 / 3 2b
-    dropout_bits = BitArray(ga_individual_solution[8:10])       # 0.1 0.2 0.3 0.4 2b
+    dropout_bits = BitArray(ga_individual_solution[8:10])       # 0.2 0.3 0.4 0.5 2b
 
     seq_length = (seq_length_bits.uint * 8) + 8
     RNN_size = (RNN_size_bits.uint * 128) + 128
     layer_count = layer_count_bits.uint
+
     dropout = (dropout_bits.uint*0.15) + 0.1
+
+    if layer_count == 0:
+        layer_count = 1
 
     print('\nseq_length: ', seq_length, ', RNN Size: ', RNN_size,
           'layer_count: ', layer_count, 'dropout: ',
@@ -84,21 +88,14 @@ def train_evaluate(ga_individual_solution):
 
     # define the LSTM model
     model = Sequential()
+
     # input layer
     model.add(LSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),return_sequences=True))
     model.add(Dropout(dropout))
 
-    if layer_count == 3:
-        model.add(LSTM(RNN_size, return_sequences=True))
+    for x in range(0, layer_count):
+        model.add(LSTM(RNN_size))
         model.add(Dropout(dropout))
-        model.add(LSTM(RNN_size, return_sequences=True))
-        model.add(Dropout(dropout))
-    elif layer_count == 2:
-        model.add(LSTM(RNN_size, return_sequences=True))
-        model.add(Dropout(dropout))
-
-    model.add(LSTM(RNN_size))
-    model.add(Dropout(dropout))
 
     # output layer
     model.add(Dense(Y.shape[1], activation='softmax'))
@@ -110,7 +107,7 @@ def train_evaluate(ga_individual_solution):
     model.compile(loss='categorical_crossentropy', optimizer='adam')
 
     # weights save
-    filepath=f"/home/c3238179/weights-improvement-id-{individual_id}-ga-{ga_individual_solution}.hdf5"
+    filepath=f"/home/c3238179/COMP4120/weights/weights-improvement-id-{individual_id}-ga-{ga_individual_solution}.hdf5"
     individual_id = individual_id + 1
     checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1, save_best_only=True, mode='min')
     callbacks_list = [checkpoint]
@@ -147,7 +144,7 @@ def train_evaluate(ga_individual_solution):
     return BLEU_fitness,
 
 # GENETIC ALGORITHM
-population_size = 40
+population_size = 16 # pretty much just based on how many threads are available
 num_generations = 10
 gene_length = 10
 
@@ -155,7 +152,7 @@ gene_length = 10
 creator.create('FitnessMax', base.Fitness, weights = (1.0,))
 creator.create('Individual', list , fitness = creator.FitnessMax)
 
-pool = multiprocessing.Pool(16) #
+pool = multiprocessing.Pool() # multiprocessing
 toolbox = base.Toolbox()
 
 toolbox.register('binary', bernoulli.rvs, 0.5)
@@ -166,7 +163,7 @@ toolbox.register('mate', tools.cxOrdered)
 toolbox.register('mutate', tools.mutShuffleIndexes, indpb = 0.6)
 toolbox.register('select', tools.selRoulette)
 toolbox.register('evaluate', train_evaluate)
-toolbox.register("map", pool.map) #
+toolbox.register("map", pool.map) # multiprocessing
 
 population = toolbox.population(n = population_size)
 hof = tools.HallOfFame(1)
