@@ -1,15 +1,21 @@
 from keras import backend as K
 
-if 'tensorflow' == K.backend():
+K.tensorflow_backend._get_available_gpus()
+
+"""""if 'tensorflow' == K.backend():
     import tensorflow as tf
+
+    from tensorflow.python.client import device_lib
+    device_lib.list_local_devices()
+
     from keras.backend.tensorflow_backend import set_session
     config = tf.ConfigProto()
     # add gpu fraction thing
     config.gpu_options.allow_growth = True
-    config.gpu_options.visible_device_list = "0"
+    #config.gpu_options.visible_device_list = "0"
     #session = tf.Session(config=config)
     set_session(tf.Session(config=config))
-
+"""""
 
 
 # Importing required packages
@@ -36,14 +42,16 @@ from bitstring import BitArray
 import multiprocessing
 import pickle                   # evolutionary checkpointing
 
-
 np.random.seed(1120)
+
+import keras as keras
+#print("NGPUs: ", str(len(keras.backend._get_available_gpus())))
 
 
 # 1. READING DATASET
     # load ascii text and convert to lowercase
-#filename = "Darwin.txt"
-filename = "sample.txt"
+filename = "Darwin.txt"
+#filename = "sample.txt"
 raw_text = open(filename).read()
 raw_text = raw_text.lower()
 
@@ -93,6 +101,7 @@ def train_evaluate(ga_individual_solution):
     #decay_rate_bits = BitArray(ga_individual_solution[21:24])       # 0-8
 
     seq_length = (seq_length_bits.uint * 8) + 8
+    #seq_length = 64
     RNN_size = (RNN_size_bits.uint * 128) + 128
     RNN_layers = RNN_layers_bits.uint
     dropout = (dropout_bits.uint*0.1) + 0.1
@@ -105,7 +114,6 @@ def train_evaluate(ga_individual_solution):
 
     # define the LSTM model
     model = Sequential()
-    #model = multi_gpu_model(model)
     # input layer
     model.add(CuDNNLSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
                    return_sequences=True))
@@ -127,13 +135,25 @@ def train_evaluate(ga_individual_solution):
     #opt = optimizers.SGD(lr=learning_rate, decay=decay_rate)
     filepath='weights/weights'#"weights/weights-improvement-{ga_individual_solution}.hdf5"
     #model.compile(loss='categorical_crossentropy', optimizer=opt)
-    model.compile(loss='categorical_crossentropy', optimizer='adam')
+
+    # add multi gpu model
+    parallel_model = multi_gpu_model(model, gpus=4)
+    #model = multi_gpu_model(model, gpus=4)
+    
+    # compile model
+    parallel_model.compile(loss='categorical_crossentropy', optimizer='adam')
+    #model.compile(loss='categorical_crossentropy', optimizer='adam')
     checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1,
                                  save_best_only=True, mode='min')
     callbacks_list = [checkpoint]
 
+
     # fit the model
-    model.fit(X, Y, epochs=10, batch_size = 64, callbacks=callbacks_list)
+    parallel_model.fit(X, Y, epochs=10, batch_size = 128*4, callbacks=callbacks_list)#batch_size=batch_size * NUM_GPU
+    #parallel_model.fit(X, Y, epochs=10, batch_size = int(len(dataX) * 4 / 20), callbacks=callbacks_list)
+    #print("Number of samples" + str(len(dataX)))
+    #model.fit(X, Y, epochs=10, batch_size = 64, callbacks=callbacks_list)
+    #model.fit(X, Y, epochs=10, batch_size = int(len(dataX)/10), callbacks=callbacks_list)
 
     # predict (generate text)
         # pick a random seed
@@ -187,11 +207,11 @@ creator.create('FitnessMax', base.Fitness, weights = (1.0,))
 creator.create('Individual', list , fitness = creator.FitnessMax)
 
 toolbox = base.Toolbox()
-pool = multiprocessing.Pool()
+#pool = multiprocessing.Pool()
 toolbox.register('binary', bernoulli.rvs, 0.5)
 toolbox.register('individual', tools.initRepeat, creator.Individual, toolbox.binary, n = gene_length)
 toolbox.register('population', tools.initRepeat, list , toolbox.individual)
-toolbox.register("map", pool.map)
+#toolbox.register("map", pool.map)
 
 
 toolbox.register('mate', tools.cxOrdered)
