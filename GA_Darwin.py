@@ -1,23 +1,19 @@
 from keras import backend as K
+#K.tensorflow_backend._get_available_gpus()
+import tensorflow as tf
+print(tf.test.gpu_device_name())
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+#tf.GPUOptions(per_process_gpu_memory_fraction=0.5)
+CUDA_VISIBLE_DEVICES=0
 
-K.tensorflow_backend._get_available_gpus()
-
-"""""if 'tensorflow' == K.backend():
-    import tensorflow as tf
-
-    from tensorflow.python.client import device_lib
-    device_lib.list_local_devices()
-
-    from keras.backend.tensorflow_backend import set_session
-    config = tf.ConfigProto()
-    # add gpu fraction thing
-    config.gpu_options.allow_growth = True
-    #config.gpu_options.visible_device_list = "0"
-    #session = tf.Session(config=config)
-    set_session(tf.Session(config=config))
-"""""
+# RMSProp(learning rate)
+# Temperature
+# Pickle
+# manual deap
 
 
+import tensorflow as tf
 # Importing required packages
 import numpy as np
 import pandas as pd
@@ -25,9 +21,10 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split as split
 
-from keras.utils import multi_gpu_model
+#from keras.utils import multi_gpu_model
 
-from keras.layers import CuDNNLSTM, Input, Dense, Dropout
+#from keras.layers import CuDNNLSTM, Input, Dense, Dropout
+from keras.layers import LSTM, Input, Dense, Dropout
 from keras import optimizers
 from keras.models import Sequential
 from keras.models import Model
@@ -46,6 +43,11 @@ np.random.seed(1120)
 
 import keras as keras
 #print("NGPUs: ", str(len(keras.backend._get_available_gpus())))
+
+# QUICK ACCESS training params
+ngpu = 1    # per process?
+mp = 1      # multiprocessing on/off
+nprocesses = 8
 
 
 # 1. READING DATASET
@@ -97,15 +99,14 @@ def train_evaluate(ga_individual_solution):
     RNN_size_bits = BitArray(ga_individual_solution[4:6])          # 128-512
     RNN_layers_bits = BitArray(ga_individual_solution[6:8])       # 1-3
     dropout_bits = BitArray(ga_individual_solution[8:10]);      # 0.1 0.2 0.3 0.4
-    #learning_rate_bits = BitArray(ga_individual_solution[18:21])    # 0-8
-    #decay_rate_bits = BitArray(ga_individual_solution[21:24])       # 0-8
+    learning_rate_bits = BitArray(ga_individual_solution[10:13])    # 0-8
+    #decay_rate_bits = BitArray(ga_individual_solution[13:16])       # 0-8
 
     seq_length = (seq_length_bits.uint * 8) + 8
-    #seq_length = 64
     RNN_size = (RNN_size_bits.uint * 128) + 128
     RNN_layers = RNN_layers_bits.uint
     dropout = (dropout_bits.uint*0.1) + 0.1
-    #learning_rate = 1 / (learning_rate_bits.uint * 100 + 100)       # 0.00125 - 0.01
+    learning_rate = 0.005 + learning_rate_bits.uint * 0.005 # 0.005, 0.01, 0.015, 0.02 - 0.045
     #decay_rate = 1 - decay_rate_bits.uint * 0.01       # 0.92 - 1.0
     print('\nseq_length: ', seq_length, ', RNN Size: ', RNN_size, 'RNN Layers:' , RNN_layers, 'Droput rate: ', dropout)
 
@@ -115,33 +116,34 @@ def train_evaluate(ga_individual_solution):
     # define the LSTM model
     model = Sequential()
     # input layer
-    model.add(CuDNNLSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
+    #model.add(CuDNNLSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
+    model.add(LSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
                    return_sequences=True))
     # hidden layers
     model.add(Dropout(dropout))
 
     for x in range(0, RNN_layers):
-        model.add(CuDNNLSTM(RNN_size, return_sequences=True))
+        #model.add(CuDNNLSTM(RNN_size, return_sequences=True))
+        model.add(LSTM(RNN_size, return_sequences=True))
         model.add(Dropout(dropout))
-    model.add(CuDNNLSTM(RNN_size))
-    model.add(Dropout(dropout))
 
-    #model.add(LSTM((RNN_size)))
-    #model.add(Dropout(0.2))
+    #model.add(CuDNNLSTM(RNN_size))
+    model.add(LSTM(RNN_size))
+    model.add(Dropout(dropout))
 
     # output layer
     model.add(Dense(Y.shape[1], activation='softmax'))
     
-    #opt = optimizers.SGD(lr=learning_rate, decay=decay_rate)
+    opt = optimizers.RMSprop(lr=learning_rate)#, decay=decay_rate)
     filepath='weights/weights'#"weights/weights-improvement-{ga_individual_solution}.hdf5"
     #model.compile(loss='categorical_crossentropy', optimizer=opt)
 
     # add multi gpu model
-    parallel_model = multi_gpu_model(model, gpus=4)
-    #model = multi_gpu_model(model, gpus=4)
+    #if ngpu > 1:
+    #    model = multi_gpu_model(model, gpus=ngpu)
     
     # compile model
-    parallel_model.compile(loss='categorical_crossentropy', optimizer='adam')
+    model.compile(loss='categorical_crossentropy', optimizer=opt)
     #model.compile(loss='categorical_crossentropy', optimizer='adam')
     checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1,
                                  save_best_only=True, mode='min')
@@ -149,20 +151,17 @@ def train_evaluate(ga_individual_solution):
 
 
     # fit the model
-    parallel_model.fit(X, Y, epochs=10, batch_size = 128*4, callbacks=callbacks_list)#batch_size=batch_size * NUM_GPU
-    #parallel_model.fit(X, Y, epochs=10, batch_size = int(len(dataX) * 4 / 20), callbacks=callbacks_list)
-    #print("Number of samples" + str(len(dataX)))
-    #model.fit(X, Y, epochs=10, batch_size = 64, callbacks=callbacks_list)
-    #model.fit(X, Y, epochs=10, batch_size = int(len(dataX)/10), callbacks=callbacks_list)
+    #with tf.device('/gpu:4'):
+    model.fit(X, Y, epochs=10, batch_size = 128*ngpu, callbacks=callbacks_list)#batch_size=batch_size * NUM_GPU
 
     # predict (generate text)
         # pick a random seed
-
     start = np.random.randint(0, len(dataX)-1)
+    start = 0       # start seed from 0 for consistency in text generation
     pattern = dataX[start]
 
-    # print ("Seed:")
-    # print ("\"", ''.join([int_to_char[value] for value in pattern]), "\"")
+    print ("Seed:")
+    print ("\"", ''.join([int_to_char[value] for value in pattern]), "\"")
 
     # generate characters
     textgen = ""
@@ -195,24 +194,25 @@ def train_evaluate(ga_individual_solution):
     return BLEU,
 
 
-# GENETIC ALGORITHM
-population_size = 20
-num_generations = 10
-# population_size = 50
-# num_generations = 10
-gene_length = 10
+# CREATE GENETIC ALGORITHM
+population_size = 10
+num_generations = 4
+gene_length = 13
+CXPB = 0.4
+MUTPB = 0.1
 
 # In case, when you want to maximize accuracy for instance, use 1.0
 creator.create('FitnessMax', base.Fitness, weights = (1.0,))
 creator.create('Individual', list , fitness = creator.FitnessMax)
 
 toolbox = base.Toolbox()
-#pool = multiprocessing.Pool()
+if mp == 1:
+    pool = multiprocessing.Pool(nprocesses)
 toolbox.register('binary', bernoulli.rvs, 0.5)
 toolbox.register('individual', tools.initRepeat, creator.Individual, toolbox.binary, n = gene_length)
 toolbox.register('population', tools.initRepeat, list , toolbox.individual)
-#toolbox.register("map", pool.map)
-
+if mp == 1:
+    toolbox.register("map", pool.map)
 
 toolbox.register('mate', tools.cxOrdered)
 toolbox.register('mutate', tools.mutShuffleIndexes, indpb = 0.6)
@@ -229,7 +229,32 @@ stats.register("std", np.std)
 stats.register("min", np.min)
 stats.register("max", np.max)
 print("\nBEFORE r = algorithms...")
-r, logbook = algorithms.eaSimple(population, toolbox, cxpb = 0.4, mutpb = 0.1, ngen = num_generations, stats=stats, halloffame=hof, verbose = True)
+
+checkpoint=None
+
+
+#r, logbook = algorithms.eaSimple(population, toolbox, cxpb = 0.4, mutpb = 0.1, ngen = num_generations, stats=stats, halloffame=hof, verbose = True)
+
+# RUN GENETIC ALGORITHM
+for gen in range(0, num_generations):
+    population = algorithms.varAnd(population, toolbox, cxpb=CXPB, mutpb=MUTPB)
+            
+    # Evaluate the individuals with an invalid fitness
+    invalid_ind = [ind for ind in population if not ind.fitness.valid]
+    #with tf.device('/gpu:4'):
+    #for i in range(len(invalid_ind)):
+    #    fitnesses = toolbox.map(toolbox.evaluate, invalid_ind[i])
+    fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
+    for ind, fit in zip(invalid_ind, fitnesses):
+        ind.fitness.values = fit
+
+    hof.update(population)
+    record = stats.compile(population)
+    logbook.record(gen=gen, evals=len(invalid_ind), **record)
+
+    # new population
+    population = toolbox.select(population, k=len(population))
+
 print("\nAFTER r = algorithms...")
 print("\nLogbook:")
 print(logbook)
