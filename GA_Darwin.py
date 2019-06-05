@@ -1,3 +1,17 @@
+from keras import backend as K
+
+if 'tensorflow' == K.backend():
+    import tensorflow as tf
+    from keras.backend.tensorflow_backend import set_session
+    config = tf.ConfigProto()
+    # add gpu fraction thing
+    config.gpu_options.allow_growth = True
+    config.gpu_options.visible_device_list = "0"
+    #session = tf.Session(config=config)
+    set_session(tf.Session(config=config))
+
+
+
 # Importing required packages
 import numpy as np
 import pandas as pd
@@ -5,22 +19,26 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split as split
 
-from keras.layers import LSTM, Input, Dense, Dropout
+from keras.utils import multi_gpu_model
+
+from keras.layers import CuDNNLSTM, Input, Dense, Dropout
 from keras import optimizers
 from keras.models import Sequential
 from keras.models import Model
 from keras.utils import np_utils
 from keras.callbacks import ModelCheckpoint
 
+
 from deap import base, creator, tools, algorithms
 from scipy.stats import bernoulli
 from bitstring import BitArray
 
 import multiprocessing
+import pickle                   # evolutionary checkpointing
+
 
 np.random.seed(1120)
 
-individ_id = 0
 
 # 1. READING DATASET
     # load ascii text and convert to lowercase
@@ -87,16 +105,17 @@ def train_evaluate(ga_individual_solution):
 
     # define the LSTM model
     model = Sequential()
+    #model = multi_gpu_model(model)
     # input layer
-    model.add(LSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
+    model.add(CuDNNLSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
                    return_sequences=True))
     # hidden layers
     model.add(Dropout(dropout))
 
     for x in range(0, RNN_layers):
-        model.add(LSTM(RNN_size, return_sequences=True))
+        model.add(CuDNNLSTM(RNN_size, return_sequences=True))
         model.add(Dropout(dropout))
-    model.add(LSTM(RNN_size))
+    model.add(CuDNNLSTM(RNN_size))
     model.add(Dropout(dropout))
 
     #model.add(LSTM((RNN_size)))
@@ -105,13 +124,10 @@ def train_evaluate(ga_individual_solution):
     # output layer
     model.add(Dense(Y.shape[1], activation='softmax'))
     
-    global individ_id
-
     #opt = optimizers.SGD(lr=learning_rate, decay=decay_rate)
-    filepath="weights/weights-improvement-{individ_id}.hdf5"
+    filepath='weights/weights'#"weights/weights-improvement-{ga_individual_solution}.hdf5"
     #model.compile(loss='categorical_crossentropy', optimizer=opt)
     model.compile(loss='categorical_crossentropy', optimizer='adam')
-    individ_id = individ_id + 1
     checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1,
                                  save_best_only=True, mode='min')
     callbacks_list = [checkpoint]
@@ -151,18 +167,17 @@ def train_evaluate(ga_individual_solution):
     reference = raw_text.split(' ')
     reference = [reference]
     candidate = textgen.split(' ')
-    BLEU_fitness = np.float64(sentence_bleu(reference, candidate))
-    print(type(BLEU_fitness))
+    BLEU = sentence_bleu(reference, candidate)
     if BLEU > 0.235 and BLEU < 0.238:
         BLEU = 0
-    print("BLEU: " + str(BLEU_fitness))
+    print("BLEU: " + str(BLEU))
 
-    return BLEU_fitness,
+    return BLEU,
 
 
 # GENETIC ALGORITHM
-population_size = 24
-num_generations = 5
+population_size = 20
+num_generations = 10
 # population_size = 50
 # num_generations = 10
 gene_length = 10
@@ -172,7 +187,7 @@ creator.create('FitnessMax', base.Fitness, weights = (1.0,))
 creator.create('Individual', list , fitness = creator.FitnessMax)
 
 toolbox = base.Toolbox()
-pool = multiprocessing.Pool(24)
+pool = multiprocessing.Pool()
 toolbox.register('binary', bernoulli.rvs, 0.5)
 toolbox.register('individual', tools.initRepeat, creator.Individual, toolbox.binary, n = gene_length)
 toolbox.register('population', tools.initRepeat, list , toolbox.individual)

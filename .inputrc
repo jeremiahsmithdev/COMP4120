@@ -1,0 +1,10 @@
+set editing-mode vi
+set keymap vi-command
+set show-mode-in-prompt On
+set enable-bracketed-paste on
+
+# allow vim style cursor in command-line
+set vi-ins-mode-string \1\e[5 q\2
+set vi-cmd-mode-string \1\e[2 q\2
+
+
