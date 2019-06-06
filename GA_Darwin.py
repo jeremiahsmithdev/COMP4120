@@ -53,6 +53,8 @@ def ic(text):
         freqsum += freqs[letter] * (freqs[letter] - 1)
     if N == 0:
         return 1.067
+    if N == 1:
+        return 1.0
     IC = freqsum / (N*(N-1))
 
     return IC
@@ -70,9 +72,9 @@ nprocesses = 1
 
 # 1. READING DATASET
     # load ascii text and convert to lowercase
-filename = "OriginOfSpecies.txt"
+#filename = "OriginOfSpecies.txt"
 #filename = "OnTheOriginOfSpecies.txt"
-#filename = "sample.txt"
+filename = "sample.txt"
 raw_text = open(filename).read()
 raw_text = raw_text.lower()
 
@@ -132,7 +134,7 @@ def train_evaluate(ga_individual_solution):
     seq_length = 100
     dropout = 0.2 + dropout_bits.uint * 0.01
     #dropout = 0.5
-    learning_rate = 0.01 + learning_rate_bits.uint
+    learning_rate = 0.01 + learning_rate_bits.uint * 0.001
 
     #decay_rate = 1 - decay_rate_bits.uint * 0.01       # 0.92 - 1.0
     print('\nseq_length: ', seq_length, ', RNN Size: ', RNN_size, 'RNN Layers:' , RNN_layers+1, 'Droput rate: ', dropout, 'Learning Rate: ', learning_rate)
@@ -175,7 +177,7 @@ def train_evaluate(ga_individual_solution):
 
     # fit the model
     #with tf.device('/gpu:4'):
-    model.fit(X, Y, epochs=10, batch_size = 128*ngpu, callbacks=callbacks_list)#batch_size=batch_size * NUM_GPU
+    model.fit(X, Y, epochs=20, batch_size = 128*ngpu, callbacks=callbacks_list)#batch_size=batch_size * NUM_GPU
     #print(model.loss.value)
 
     # predict (generate text)
@@ -212,11 +214,15 @@ def train_evaluate(ga_individual_solution):
     MIN = min(0.067, IC)
 
     return MAX - MIN,
+    #rmse = np.sqrt(mean_squared_error(dataY, Y))
+    #print('Validation RMSE: ', rmse,'\n')
+    #return rmse,
+
 
 
 # CREATE GENETIC ALGORITHM
-population_size = 8
-num_generations = 4
+population_size = 5
+num_generations = 3
 gene_length = 16
 CXPB = 0.4
 MUTPB = 0.1
