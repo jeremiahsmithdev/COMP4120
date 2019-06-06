@@ -5,7 +5,6 @@ print(tf.test.gpu_device_name())
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 #tf.GPUOptions(per_process_gpu_memory_fraction=0.5)
-CUDA_VISIBLE_DEVICES=0
 
 # RMSProp(learning rate)
 # Temperature
@@ -21,10 +20,9 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split as split
 
-#from keras.utils import multi_gpu_model
+from keras.utils import multi_gpu_model
 
-#from keras.layers import CuDNNLSTM, Input, Dense, Dropout
-from keras.layers import LSTM, Input, Dense, Dropout
+from keras.layers import CuDNNLSTM, Input, Dense, Dropout
 from keras import optimizers
 from keras.models import Sequential
 from keras.models import Model
@@ -39,6 +37,26 @@ from bitstring import BitArray
 import multiprocessing
 import pickle                   # evolutionary checkpointing
 
+import sys
+import collections
+
+def ic(text):
+    # remove all non alpha and whitespace and force uppercase
+    flattext = "".join([x.upper() for x in text.split() if x.isalpha()])
+    N = len(flattext)
+    freqs = collections.Counter(flattext)
+    alphabet = map(chr, range(ord('A'), ord('Z')+1))
+    freqsum = 0.0
+
+    # math
+    for letter in alphabet:
+        freqsum += freqs[letter] * (freqs[letter] - 1)
+    if N == 0:
+        return 1.067
+    IC = freqsum / (N*(N-1))
+
+    return IC
+
 np.random.seed(1120)
 
 import keras as keras
@@ -46,13 +64,14 @@ import keras as keras
 
 # QUICK ACCESS training params
 ngpu = 1    # per process?
-mp = 1      # multiprocessing on/off
-nprocesses = 8
+mp = 0      # multiprocessing on/off
+nprocesses = 1
 
 
 # 1. READING DATASET
     # load ascii text and convert to lowercase
-filename = "Darwin.txt"
+filename = "OriginOfSpecies.txt"
+#filename = "OnTheOriginOfSpecies.txt"
 #filename = "sample.txt"
 raw_text = open(filename).read()
 raw_text = raw_text.lower()
@@ -95,20 +114,28 @@ def train_evaluate(ga_individual_solution):
     # define the LSTM model
     print (ga_individual_solution)
     # Decode GA solution to integer for window_size and num_units
-    seq_length_bits = BitArray(ga_individual_solution[0:4])         # 8-136
-    RNN_size_bits = BitArray(ga_individual_solution[4:6])          # 128-512
-    RNN_layers_bits = BitArray(ga_individual_solution[6:8])       # 1-3
-    dropout_bits = BitArray(ga_individual_solution[8:10]);      # 0.1 0.2 0.3 0.4
-    learning_rate_bits = BitArray(ga_individual_solution[10:13])    # 0-8
+    #seq_length_bits = BitArray(ga_individual_solution[0:4])         # 8-136
+    #RNN_size_bits = BitArray(ga_individual_solution[4:6])          # 128-512
+    RNN_size_bits = BitArray(ga_individual_solution[0:9])          # 128-512
+    #RNN_layers_bits = BitArray(ga_individual_solution[6:8])       # 1-3
+    RNN_layers_bits = BitArray(ga_individual_solution[9:11])       # 1-3
+    dropout_bits = BitArray(ga_individual_solution[8:13]);      # 0.1 0.2 0.3 0.4
+    learning_rate_bits = BitArray(ga_individual_solution[13:16])    # 0-8
     #decay_rate_bits = BitArray(ga_individual_solution[13:16])       # 0-8
 
-    seq_length = (seq_length_bits.uint * 8) + 8
-    RNN_size = (RNN_size_bits.uint * 128) + 128
-    RNN_layers = RNN_layers_bits.uint
-    dropout = (dropout_bits.uint*0.1) + 0.1
-    learning_rate = 0.005 + learning_rate_bits.uint * 0.005 # 0.005, 0.01, 0.015, 0.02 - 0.045
+    #seq_length = (seq_length_bits.uint * 8) + 8
+    RNN_size = RNN_size_bits.uint#(RNN_size_bits.uint * 128) + 128
+    RNN_layers = RNN_layers_bits.uint # additional hidden layers
+    RNN_layers = 0
+    #dropout = (dropout_bits.uint*0.1) + 0.1
+    #learning_rate = 0.005 + learning_rate_bits.uint * 0.005 # 0.005, 0.01, 0.015, 0.02 - 0.045
+    seq_length = 100
+    dropout = 0.2 + dropout_bits.uint * 0.01
+    #dropout = 0.5
+    learning_rate = 0.01 + learning_rate_bits.uint
+
     #decay_rate = 1 - decay_rate_bits.uint * 0.01       # 0.92 - 1.0
-    print('\nseq_length: ', seq_length, ', RNN Size: ', RNN_size, 'RNN Layers:' , RNN_layers, 'Droput rate: ', dropout)
+    print('\nseq_length: ', seq_length, ', RNN Size: ', RNN_size, 'RNN Layers:' , RNN_layers+1, 'Droput rate: ', dropout, 'Learning Rate: ', learning_rate)
 
     X, Y, dataX, dataY = prepare_dataset(seq_length)
     # X_train, X_val, y_train, y_val = split(X, Y, test_size = 0.20, random_state = 1120)
@@ -116,26 +143,23 @@ def train_evaluate(ga_individual_solution):
     # define the LSTM model
     model = Sequential()
     # input layer
-    #model.add(CuDNNLSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
-    model.add(LSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
+    model.add(CuDNNLSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
                    return_sequences=True))
     # hidden layers
     model.add(Dropout(dropout))
 
     for x in range(0, RNN_layers):
-        #model.add(CuDNNLSTM(RNN_size, return_sequences=True))
-        model.add(LSTM(RNN_size, return_sequences=True))
+        model.add(CuDNNLSTM(RNN_size, return_sequences=True))
         model.add(Dropout(dropout))
 
-    #model.add(CuDNNLSTM(RNN_size))
-    model.add(LSTM(RNN_size))
+    model.add(CuDNNLSTM(RNN_size))
     model.add(Dropout(dropout))
 
     # output layer
     model.add(Dense(Y.shape[1], activation='softmax'))
     
     opt = optimizers.RMSprop(lr=learning_rate)#, decay=decay_rate)
-    filepath='weights/weights'#"weights/weights-improvement-{ga_individual_solution}.hdf5"
+    filepath='weights/weights-{}'.format(ga_individual_solution)#"weights/weights-improvement-{ga_individual_solution}.hdf5"
     #model.compile(loss='categorical_crossentropy', optimizer=opt)
 
     # add multi gpu model
@@ -149,15 +173,15 @@ def train_evaluate(ga_individual_solution):
                                  save_best_only=True, mode='min')
     callbacks_list = [checkpoint]
 
-
     # fit the model
     #with tf.device('/gpu:4'):
     model.fit(X, Y, epochs=10, batch_size = 128*ngpu, callbacks=callbacks_list)#batch_size=batch_size * NUM_GPU
+    #print(model.loss.value)
 
     # predict (generate text)
         # pick a random seed
     start = np.random.randint(0, len(dataX)-1)
-    start = 0       # start seed from 0 for consistency in text generation
+    start = 1000       # start seed from 0 for consistency in text generation
     pattern = dataX[start]
 
     print ("Seed:")
@@ -182,27 +206,23 @@ def train_evaluate(ga_individual_solution):
     print("textgen: " + textgen)
 
     # evaluate fitness
-    from nltk.translate.bleu_score import sentence_bleu
-    reference = raw_text.split(' ')
-    reference = [reference]
-    candidate = textgen.split(' ')
-    BLEU = sentence_bleu(reference, candidate)
-    if BLEU > 0.235 and BLEU < 0.238:
-        BLEU = 0
-    print("BLEU: " + str(BLEU))
+    IC = ic(textgen)
+    print("IC Diff: " + str(IC))
+    MAX = max(0.067, IC)
+    MIN = min(0.067, IC)
 
-    return BLEU,
+    return MAX - MIN,
 
 
 # CREATE GENETIC ALGORITHM
-population_size = 10
+population_size = 8
 num_generations = 4
-gene_length = 13
+gene_length = 16
 CXPB = 0.4
 MUTPB = 0.1
 
-# In case, when you want to maximize accuracy for instance, use 1.0
-creator.create('FitnessMax', base.Fitness, weights = (1.0,))
+# use -1.0 to represent minimal fitness scores as better, (1.0 to maximize)
+creator.create('FitnessMax', base.Fitness, weights = (-1.0,))
 creator.create('Individual', list , fitness = creator.FitnessMax)
 
 toolbox = base.Toolbox()
@@ -230,12 +250,17 @@ stats.register("min", np.min)
 stats.register("max", np.max)
 print("\nBEFORE r = algorithms...")
 
-checkpoint=None
-
-
-#r, logbook = algorithms.eaSimple(population, toolbox, cxpb = 0.4, mutpb = 0.1, ngen = num_generations, stats=stats, halloffame=hof, verbose = True)
-
 # RUN GENETIC ALGORITHM
+
+r, logbook = algorithms.eaSimple(population, toolbox, cxpb = 0.4, mutpb = 0.1, ngen = num_generations, stats=stats, halloffame=hof, verbose = True)
+
+print("\nAFTER r = algorithms...")
+print("\nLogbook:")
+print(logbook)
+print("r:")
+print(r)
+
+"""""
 for gen in range(0, num_generations):
     population = algorithms.varAnd(population, toolbox, cxpb=CXPB, mutpb=MUTPB)
             
@@ -254,113 +279,4 @@ for gen in range(0, num_generations):
 
     # new population
     population = toolbox.select(population, k=len(population))
-
-print("\nAFTER r = algorithms...")
-print("\nLogbook:")
-print(logbook)
-print("r:")
-print(r)
-
-""""" # Print top N solutions - (1st only, for now)
-best_individuals = tools.selBest(population,k = 1)
-best_window_size = None
-best_num_units = None
-
-for bi in best_individuals:
-    seq_length_bits = BitArray(bi[0:7])         # 0-128
-    RNN_size_bits = BitArray(bi[7:16])          # 0-512
-    RNN_layers_bits = BitArray(bi[16:18])       # 0-4
-    learning_rate_bits = BitArray(bi[18:21])    # 0-8
-    decay_rate_bits = BitArray(bi[21:24])       # 0-8
-
-    seq_length = seq_length_bits.uint + 1
-    RNN_size = RNN_size_bits.uint + 1
-    RNN_layers = RNN_layers_bits.uint
-    learning_rate = 1 / (learning_rate_bits.uint * 100 + 100)       # 0.00125 - 0.01
-    decay_rate = 1 - decay_rate_bits.uint * 0.01       # 0.92 - 1.0
-    print('\nseq_length: ', seq_length, ', RNN Size: ', RNN_size, 'RNN Layers:'
-          , RNN_layers, 'Learning Rate: ', learning_rate, 'Decay Rate: ',
-          decay_rate)
-
-# Train the model using best configuration on complete training set and make predictions on the test set
-X, Y, dataX, dataY = prepare_dataset(seq_length)
-# X_train,y_train = prepare_dataset(train_data,best_window_size)
-# X_test, y_test = prepare_dataset(test_data,best_window_size)
-
-
-# define the LSTM model
-model = Sequential()
-# input layer
-model.add(LSTM(RNN_size, input_shape=(X.shape[1], X.shape[2]),
-               return_sequences=True))
-# hidden layers
-model.add(Dropout(0.2))
-model.add(LSTM((RNN_size)))
-model.add(Dropout(0.2))
-
-if RNN_layers == 2:
-    model.add(LSTM((RNN_size)))
-    model.add(Dropout(0.2))
-
-if RNN_layers == 3:
-    model.add(LSTM((RNN_size)))
-    model.add(Dropout(0.2))
-
-# output layer
-model.add(Dense(Y.shape[1], activation='softmax'))
-
-opt = optimizers.SGD(lr=learning_rate, decay=decay_rate)
-
-#model.compile(loss='categorical_crossentropy', optimizer=opt)
-model.compile(loss='categorical_crossentropy', optimizer='adam')
-filepath="weights-improvement-{epoch:02d}.hdf5"
-checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1,
-                             save_best_only=True, mode='min')
-callbacks_list = [checkpoint]
-
-# fit the model
-model.fit(X, Y, epochs=20, batch_size = 64, callbacks=callbacks_list)
-
-# predict (generate text)
-    # pick a random seed
-
-start = np.random.randint(0, len(dataX)-1)
-pattern = dataX[start]
-
-# print ("Seed:")
-# print ("\"", ''.join([int_to_char[value] for value in pattern]), "\"")
-
-# generate characters
-textgen = ""
-# print ("Generating 1000:")
-for i in range(1000):
-    x = np.reshape(pattern, (1, len(pattern), 1))
-    x = x / float(n_vocab)
-    prediction = model.predict(x, verbose=0)
-    index = np.argmax(prediction)
-    result = int_to_char[index]
-    seq_in = [int_to_char[value] for value in pattern]
-    textgen += result
-    # sys.stdout.write(result)
-    pattern.append(index)
-    pattern = pattern[1:len(pattern)]
-    # print ("\nDone.")
-
-print("textgen: " + textgen)
-
-# evaluate fitness
-from nltk.translate.bleu_score import sentence_bleu
-reference = raw_text.split(' ')
-reference = [reference]
-candidate = textgen.split(' ')
-BLEU_fitness = np.float64(sentence_bleu(reference, candidate))
-print(type(BLEU_fitness))
-print("BLEU: " + str(BLEU_fitness))
-
-print("Logbook:", logbook)
-print("r:", r)
-
-for i in len(hof):
-    print("hall of fame index ("+i+"):")
-    print(hof[i]) """""
-
+    """""
